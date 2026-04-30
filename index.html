@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <title>FCS Bate Ponto - Spazio Ouro Verde</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: sans-serif;
+            background-color: #f0f2f5;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .card-ponto, .card-admin {
+            background: white;
+            padding: 25px;
+            border-radius: 20px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+        }
+
+        #relogio { font-size: 32px; font-weight: bold; color: #1a73e8; margin-bottom: 5px; }
+        #data-atual { font-size: 14px; color: #666; margin-bottom: 20px; }
+
+        #container-camera {
+            width: 100%;
+            height: 280px;
+            background-color: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            margin-bottom: 15px;
+            border: 3px solid #1a73e8;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #video {
+            min-width: 100%;
+            min-height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+        }
+
+        select, button, input { 
+            width: 100%; 
+            padding: 15px; 
+            margin: 8px 0; 
+            border-radius: 8px; 
+            border: 1px solid #ccc; 
+            font-size: 16px; 
+        }
+
+        button { 
+            background: #1a73e8; 
+            color: white; 
+            border: none; 
+            font-weight: bold; 
+            cursor: pointer; 
+        }
+
+        .btn-saida { background: #d93025; }
+        
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        .foto-ponto { width: 45px; height: 45px; object-fit: cover; border-radius: 4px; }
+    </style>
+</head>
+<body>
+
+<!-- TELA DE REGISTRO -->
+<div id="tela-ponto" class="card-ponto">
+    <div id="relogio">00:00:00</div>
+    <div id="data-atual">Carregando data...</div>
+    <div id="container-camera">
+        <video id="video" autoplay playsinline></video>
+    </div>
+    
+    <select id="funcionario">
+        <option value="">Selecione seu nome</option>
+        <option value="João Silva">João Silva</option>
+        <option value="Maria Oliveira">Maria Oliveira</option>
+        <option value="Carlos Santos">Carlos Santos</option>
+        <option value="Ana Costa">Ana Costa</option>
+        <option value="Fernanda Lima">Fernanda Lima</option> 
+    </select>
+
+    <div style="display: flex; gap: 10px;">
+        <button onclick="registrarPonto('Entrada')">ENTRADA</button>
+        <button class="btn-saida" onclick="registrarPonto('Saída')">SAÍDA</button>
+    </div>
+
+    <button onclick="mostrarLogin()" style="background: none; color: #999; font-size: 12px; margin-top: 15px; border: none;">Acesso Restrito</button>
+</div>
+
+<!-- TELA ADMINISTRATIVA -->
+<div id="tela-admin" class="card-admin" style="display: none;">
+    <h3>Painel do Gestor</h3>
+    <div id="login-admin">
+        <input type="password" id="senha-admin" placeholder="Senha mestre">
+        <button onclick="acessarAdmin()">ENTRAR NO PAINEL</button>
+        <button onclick="voltarParaPonto()" style="background: #ccc; margin-top: 5px;">VOLTAR</button>
+    </div>
+
+    <div id="conteudo-admin" style="display: none;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+            <h4 id="contador-registros">Registros: 0</h4>
+            <button onclick="exportarCSV()" style="background: #188038; width: auto; padding: 5px 10px; font-size: 12px;">EXPORTAR EXCEL</button>
+        </div>
+
+        <div style="overflow-x: auto; max-height: 300px;">
+            <table id="tabela-ponto">
+                <thead>
+                    <tr>
+                        <th>Foto</th>
+                        <th>Informações</th>
+                        <th>Tipo</th>
+                    </tr>
+                </thead>
+                <tbody id="tabela-corpo"></tbody>
+            </table>
+        </div>
+
+        <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #eee;">
+            <button onclick="limparBancoDeDados()" style="background: #d93025; font-size: 12px;">LIMPAR TUDO</button>
+            <button onclick="voltarParaPonto()" style="background: #6c757d; margin-top: 10px;">SAIR DO PAINEL</button>
+        </div>
+    </div>
+</div>
+
+<canvas id="canvas" style="display:none;" width="320" height="240"></canvas>
+
+<script>
+    const SENHA_MESTRE = "1234";
+    let db;
+
+    // Inicialização do Banco de Dados
+    const request = indexedDB.open("RH_PontoDB", 1);
+    request.onupgradeneeded = (e) => {
+        db = e.target.result;
+        if (!db.objectStoreNames.contains("pontos")) {
+            db.createObjectStore("pontos", { keyPath: "id", autoIncrement: true });
+        }
+    };
+    request.onsuccess = (e) => { db = e.target.result; };
+
+    // Relógio e Câmera
+    async function initCamera() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+            document.getElementById('video').srcObject = stream;
+        } catch (err) { alert("Câmera não autorizada ou indisponível."); }
+    }
+
+    setInterval(() => {
+        const agora = new Date();
+        document.getElementById('relogio').innerText = agora.toLocaleTimeString('pt-BR');
+        document.getElementById('data-atual').innerText = agora.toLocaleDateString('pt-BR', { dateStyle: 'full' });
+    }, 1000);
+
+    // Funções de Registro
+    async function registrarPonto(tipo) {
+        const nome = document.getElementById('funcionario').value;
+        if (!nome) return alert("Selecione um nome!");
+
+        const canvas = document.getElementById('canvas');
+        const video = document.getElementById('video');
+        const ctx = canvas.getContext('2d');
+        
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const foto = canvas.toDataURL('image/jpeg', 0.6);
+
+        const agora = new Date();
+        const registro = {
+            nome, tipo, foto,
+            hora: agora.toLocaleTimeString('pt-BR'),
+            data: agora.toLocaleDateString('pt-BR'),
+            dia: agora.toLocaleDateString('pt-BR', { weekday: 'short' }),
+            timestamp: agora.getTime()
+        };
+
+        const trans = db.transaction(["pontos"], "readwrite");
+        const store = trans.objectStore("pontos");
+        store.add(registro);
+
+        trans.oncomplete = () => {
+            alert(`Ponto de ${tipo} confirmado: ${nome}`);
+            document.getElementById('funcionario').value = "";
+        };
+    }
+
+    // Administração
+    function mostrarLogin() {
+        document.getElementById('tela-ponto').style.display = 'none';
+        document.getElementById('tela-admin').style.display = 'block';
+    }
+
+    function acessarAdmin() {
+        const senha = document.getElementById('senha-admin').value;
+        if (senha === SENHA_MESTRE) {
+            document.getElementById('login-admin').style.display = 'none';
+            document.getElementById('conteudo-admin').style.display = 'block';
+            listarPontos();
+            atualizarContador();
+        } else { alert("Senha incorreta!"); }
+    }
+
+    function voltarParaPonto() {
+        document.getElementById('tela-admin').style.display = 'none';
+        document.getElementById('tela-ponto').style.display = 'block';
+        document.getElementById('senha-admin').value = "";
+        initCamera();
+    }
+
+    function listarPontos() {
+        const corpo = document.getElementById('tabela-corpo');
+        corpo.innerHTML = "";
+        const store = db.transaction("pontos").objectStore("pontos");
+        store.openCursor(null, "prev").onsuccess = (e) => {
+            const cursor = e.target.result;
+            if (cursor) {
+                const v = cursor.value;
+                corpo.innerHTML += `<tr>
+                    <td><img src="${v.foto}" class="foto-ponto"></td>
+                    <td>${v.nome}<br><small>${v.data} - ${v.hora}</small></td>
+                    <td>${v.tipo}</td>
+                </tr>`;
+                cursor.continue();
+            }
+        };
+    }
+
+    function atualizarContador() {
+        const store = db.transaction(["pontos"], "readonly").objectStore("pontos");
+        const req = store.count();
+        req.onsuccess = () => document.getElementById('contador-registros').innerText = `Registros: ${req.result}`;
+    }
+
+    function exportarCSV() {
+        const store = db.transaction("pontos").objectStore("pontos");
+        let csv = "\uFEFFNome;Data;Hora;Tipo\n";
+        store.openCursor().onsuccess = (e) => {
+            const cursor = e.target.result;
+            if (cursor) {
+                const v = cursor.value;
+                csv += `${v.nome};${v.data};${v.hora};${v.tipo}\n`;
+                cursor.continue();
+            } else {
+                const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                const link = document.createElement("a");
+                link.href = URL.createObjectURL(blob);
+                link.download = "relatorio_pontos.csv";
+                link.click();
+            }
+        };
+    }
+
+    function limparBancoDeDados() {
+        if (confirm("Apagar todos os registros permanentemente?")) {
+            const trans = db.transaction(["pontos"], "readwrite");
+            trans.objectStore("pontos").clear();
+            trans.oncomplete = () => {
+                alert("Dados removidos.");
+                listarPontos();
+                atualizarContador();
+            };
+        }
+    }
+
+    window.onload = initCamera;
+</script>
+</body>
+</html>
